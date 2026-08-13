@@ -462,6 +462,11 @@ void Cantp_RxTask(Cantp_HandlerStruct* Handler, Cantp_CallWay way,uint32_t id, u
                 case CANTP_FIRST_FRAME:
                 {
                     Handler->Rxmsg[i].allsize = (((*msg_c)&0x0F)<<8) + *(msg_c+1);
+                    if(Handler->Rxmsg[i].allsize < CANTP_FRAME_BYTE)
+                    {
+                        Cantp_ResetRx(&Handler->Rxmsg[i]);
+                        break;
+                    }
                     if(Handler->Rxmsg[i].allsize > CANTP_FLOW_BYTE)
                     {
                         Cantp_ResetRx(&Handler->Rxmsg[i]);
