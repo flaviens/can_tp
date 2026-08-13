@@ -137,6 +137,15 @@ static bool_t Cantp_FlowControl(uint32_t id, Cantp_FlowStatus status, uint8_t bl
     return send(id,temp_data,temp_size);
 }
 
+static void Cantp_ResetRx(Cantp_RxMsgStruct* rx)
+{
+    rx->allsize = 0;
+    rx->size = 0;
+    rx->frame = 0;
+    rx->completed = FALSE;
+    rx->multi = FALSE;
+}
+
 /***************************************************************************************************************/
 //External interface(C)
 /***************************************************************************************************************/
@@ -453,6 +462,12 @@ void Cantp_RxTask(Cantp_HandlerStruct* Handler, Cantp_CallWay way,uint32_t id, u
                 case CANTP_FIRST_FRAME:
                 {
                     Handler->Rxmsg[i].allsize = (((*msg_c)&0x0F)<<8) + *(msg_c+1);
+                    if(Handler->Rxmsg[i].allsize > CANTP_FLOW_BYTE)
+                    {
+                        Cantp_ResetRx(&Handler->Rxmsg[i]);
+                        Cantp_FlowControl(Handler->TxIdList[i],CANTP_FLOW_STATUS_OVERFLOW,Handler->Local.block,Handler->Local.stmin,Handler->CanTx);
+                        break;
+                    }
                     //There are only 6 valid slots left in the first frame
                     memcpy(Handler->Rxmsg[i].payload, msg_c+2, (CANTP_FRAME_BYTE - 2));
                     Handler->Rxmsg[i].completed = FALSE;
@@ -465,19 +480,25 @@ void Cantp_RxTask(Cantp_HandlerStruct* Handler, Cantp_CallWay way,uint32_t id, u
                 {
                     if(Handler->Rxmsg[i].multi == FALSE) return;
 
-                    if(Handler->Rxmsg[i].allsize >= Handler->Rxmsg[i].size + (CANTP_FRAME_BYTE - 1))
+                    if(Handler->Rxmsg[i].allsize > CANTP_FLOW_BYTE || Handler->Rxmsg[i].size > Handler->Rxmsg[i].allsize || Handler->Rxmsg[i].size > CANTP_FLOW_BYTE)
                     {
-                        memcpy(Handler->Rxmsg[i].payload + Handler->Rxmsg[i].size, msg_c+1, (CANTP_FRAME_BYTE -1));
-                        Handler->Rxmsg[i].size += (CANTP_FRAME_BYTE - 1);
-                        Handler->Rxmsg[i].frame++;
+                        Cantp_ResetRx(&Handler->Rxmsg[i]);
+                        Cantp_FlowControl(Handler->TxIdList[i],CANTP_FLOW_STATUS_OVERFLOW,Handler->Local.block,Handler->Local.stmin,Handler->CanTx);
+                        return;
                     }
-                    else
+
+                    uint32_t remaining = Handler->Rxmsg[i].allsize - Handler->Rxmsg[i].size;
+                    uint32_t copy_size = remaining > (CANTP_FRAME_BYTE - 1) ? (CANTP_FRAME_BYTE - 1) : remaining;
+                    if(copy_size > CANTP_FLOW_BYTE - Handler->Rxmsg[i].size)
                     {
-                        memcpy(Handler->Rxmsg[i].payload + Handler->Rxmsg[i].size, msg_c+1, 
-                        Handler->Rxmsg[i].allsize - Handler->Rxmsg[i].size);
-                        Handler->Rxmsg[i].size = Handler->Rxmsg[i].allsize;
-                        Handler->Rxmsg[i].frame++;
+                        Cantp_ResetRx(&Handler->Rxmsg[i]);
+                        Cantp_FlowControl(Handler->TxIdList[i],CANTP_FLOW_STATUS_OVERFLOW,Handler->Local.block,Handler->Local.stmin,Handler->CanTx);
+                        return;
                     }
+
+                    memcpy(Handler->Rxmsg[i].payload + Handler->Rxmsg[i].size, msg_c+1, copy_size);
+                    Handler->Rxmsg[i].size += copy_size;
+                    Handler->Rxmsg[i].frame++;
                     if(Handler->Rxmsg[i].allsize == Handler->Rxmsg[i].size)
                     {
                         Handler->Rxmsg[i].completed = TRUE;
